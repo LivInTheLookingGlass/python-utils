@@ -1,5 +1,3 @@
-
-
 def pi_digits():
     """generator for digits of pi"""
     q, r, t, k, n, l = 1, 0, 1, 1, 3, 3
@@ -13,8 +11,7 @@ def pi_digits():
 
 def pi(precision):
     """Returns pi to an arbitrary precision"""
-    p = 0
+    from decimal import Decimal, DecimalTuple
     gen = pi_digits()
-    for i in range(precision + 1):
-        p += gen.next() / 10 ** i
-    return p
+    tup = [gen.next() for x in range(precision + 1)]
+    return Decimal(DecimalTuple(sign=0, digits=tuple(tup), exponent=-precision))
