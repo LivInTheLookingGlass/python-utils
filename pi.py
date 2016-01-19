@@ -14,6 +14,6 @@ def pi(precision):
     from decimal import Decimal, DecimalTuple
     gen = pi_digits()
     tup = [gen.next() for x in range(precision + 1)]
-    if gen.next() >=5:
+    if gen.next() >= 5:
         tup[len(tup) - 1] += 1
     return Decimal(DecimalTuple(sign=0, digits=tuple(tup), exponent=-precision))
