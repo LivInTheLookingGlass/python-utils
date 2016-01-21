@@ -11,11 +11,16 @@ def pi_digits():
             d, d1 = a / b, a1 / b1
 
 
-def pi(precision):
+def pi(precision, rounding=True):
     """Returns pi to an arbitrary precision"""
     from decimal import Decimal, DecimalTuple
     gen = pi_digits()
-    tup = [gen.next() for x in range(precision + 1)]
-    if gen.next() >= 5:
+    tup = [next(gen) for x in range(precision + 1)]
+    if next(gen) >= 5 and rounding:
         tup[len(tup) - 1] += 1
+        r = 1
+        while tup[len(tup) - r] == 10:
+            tup[len(tup) - r] = 0
+            tup[len(tup) - (r + 1)] += 1
+            r += 1
     return Decimal(DecimalTuple(sign=0, digits=tuple(tup), exponent=-precision))
