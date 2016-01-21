@@ -1,12 +1,14 @@
 def pi_digits():
     """generator for digits of pi"""
-    q, r, t, k, n, l = 1, 0, 1, 1, 3, 3
+    k, a, b, a1, b1 = 2, 4, 1, 12, 4
     while True:
-        if 4 * q + r- t < n * t:
-            yield n
-            q, r, t, k, n, l = (10 * q, 10 * (r - n * t), t, k, (10 * (3 * q + r)) / t - 10 * n, l)
-        else:
-            q, r, t, k, n, l = (q * k, (2 * q + r) * l, t * l, k + 1, (q * (7 * k + 2) + r * l) / (t * l), l + 2)
+        p, q, k = k * k, 2 * k + 1, k + 1
+        a, b, a1, b1 = a1, b1, p * a + q * a1, p * b + q * b1
+        d, d1 = a / b, a1 / b1
+        while d == d1:
+            yield int(d)
+            a, a1 = 10 * (a % b), 10 * (a1 % b1)
+            d, d1 = a / b, a1 / b1
 
 
 def pi(precision):
