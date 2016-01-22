@@ -16,7 +16,7 @@ def pi(precision, rounding=True):
     from decimal import Decimal, DecimalTuple
     gen = pi_digits()
     tup = [next(gen) for x in range(precision + 1)]
-    if next(gen) >= 5 and rounding:
+    if rounding and next(gen) >= 5:
         tup[len(tup) - 1] += 1
         r = 1
         while tup[len(tup) - r] == 10:
