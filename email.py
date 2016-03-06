@@ -37,39 +37,24 @@ def sendText(text, to, carriers, SERVER="localhost",
 
 def parseCarriers(to, carrier):
     """Parse the email address of a given number and carrier"""
-    if carrier == "Alltel":
-        return str(to) + "@sms.alltelwireless.com"
-    elif carrier == "AT&T":
-        return str(to) + "@txt.att.net"
-    elif carrier == "Bell Canada":
-        return str(to) + "@txt.bellmobility.ca"
-    elif carrier == "Boost":
-        return str(to) + "@sms.myboostmobile.com"
-    elif carrier == "Centennial":
-        return str(to) + "@cwemail.com"
-    elif carrier == "Cellular South":
-        return str(to) + "@csouth1.com"
-    elif carrier == "Cincinnati Bell":
-        return str(to) + "@gocbw.com"
-    elif carrier == "Cricket":
-        return str(to) + "@sms.mycricket.com"
-    elif carrier == "Metro PCS":
-        return str(to) + "@metropcs.sms.us"
-    elif carrier == "Qwest":
-        return str(to) + "@qwestmp.com"
-    elif carrier == "Rogers":
-        return str(to) + "@pcs.rogers.com"
-    elif carrier == "Sprint":
-        return str(to) + "@messaging.sprintpcs.com"
-    elif carrier == "Suncom":
-        return str(to) + "@tms.suncom.com"
-    elif carrier == "T-Mobile":
-        return str(to) + "@tmomail.net"
-    elif carrier == "Telus":
-        return str(to) + "@msg.telus.com"
-    elif carrier == "US Cellular":
-        return str(to) + "@email.uscc.net"
-    elif carrier == "Verizon":
-        return str(to) + "@vzwpix.com"
+    carriers = {"Alltel": "@sms.alltelwireless.com",
+                "AT&T": "@txt.att.net",
+                "Bell Canada": "@txt.bellmobility.ca",
+                "Boost": "@sms.myboostmobile.com",
+                "Centennial": "@cwemail.com",
+                "Cellular South": "@csouth1.com",
+                "Cincinnati Bell": "@gocbw.com",
+                "Cricket": "@sms.mycricket.com",
+                "Metro PCS": "@metropcs.sms.us",
+                "Qwest": "@qwestmp.com",
+                "Rogers": "@pcs.rogers.com",
+                "Sprint": "@messaging.sprintpcs.com",
+                "Suncom": "@tms.suncom.com",
+                "T-Mobile": "@tmomail.net",
+                "Telus": "@msg.telus.com",
+                "US Cellular": "@email.uscc.net",
+                "Verizon": "@vzwpix.com"}
+    if carrier in carriers:
+        return str(to) + carriers[carrier]
     else:  # elif carrier == "Virgin":
         return str(to) + "@vmobl.com"
