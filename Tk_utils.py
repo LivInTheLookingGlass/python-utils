@@ -77,3 +77,29 @@ def prompt(warn):
 	cont.pack(fill="x")
 	root.mainloop()
 	root.destroy()
+
+
+def request_login(prompt):
+    import sys
+    if sys.version_info[0] <= 2:
+        import Tkinter as tk
+    else:
+        import tkinter as tk
+    root = tk.Tk()
+    root.wm_title("Login")
+    text = tk.Label(root, text=str(prompt))
+    text.pack(fill="x")
+    user_label = tk.Label(root, text="username:")
+    user = tk.Entry(root)
+    user_label.pack()
+    user.pack(fill="x")
+    pswd_label = tk.Label(root, text="password:")
+    pswd = tk.Entry(root, show="*")
+    pswd_label.pack()
+    pswd.pack(fill="x")
+    cont = tk.Button(root, text="Continue", command=root.quit)
+    cont.pack(fill="x")
+    root.mainloop()
+    ret = user.get(), pswd.get()
+    root.destroy()
+    return ret
