@@ -28,8 +28,7 @@ def button_choice(choices, prompt=None):
 	root = tk.Tk()
 	if prompt:
 		root.wm_title(str(prompt))
-		text = tk.Label(root, text=str(prompt))
-		text.pack(fill="x")
+		tk.Label(root, text=str(prompt)).pack(fill="x")
 	buttons = [tk.Button(root, text=c, command=functools.partial(setchoice, c=c)) for c in choices]
 	for button in buttons:
 		button.pack(fill="x")
@@ -53,12 +52,9 @@ def prompt_warning(warn):
 		import tkinter as tk
 	root = tk.Tk()
 	root.wm_title("Warning")
-	text = tk.Label(root, text=str(warn))
-	text.pack(fill="x")
-	cont = tk.Button(root, text="Continue", command=root.quit)
-	cont.pack(fill="x")
-	quit = tk.Button(root, text="Quit", command=exit)
-	quit.pack(fill="x")
+	tk.Label(root, text=str(warn))pack(fill="x")
+	tk.Button(root, text="Continue", command=root.quit).pack(fill="x")
+	tk.Button(root, text="Quit", command=exit).pack(fill="x")
 	root.mainloop()
 	root.destroy()
 
@@ -71,10 +67,8 @@ def prompt(warn):
 		import tkinter as tk
 	root = tk.Tk()
 	root.wm_title("Warning")
-	text = tk.Label(root, text=str(warn))
-	text.pack(fill="x")
-	cont = tk.Button(root, text="Continue", command=root.quit)
-	cont.pack(fill="x")
+	tk.Label(root, text=str(warn)).pack(fill="x")
+	tk.Button(root, text="Continue", command=root.quit).pack(fill="x")
 	root.mainloop()
 	root.destroy()
 
@@ -87,18 +81,14 @@ def request_login(prompt):
         import tkinter as tk
     root = tk.Tk()
     root.wm_title("Login")
-    text = tk.Label(root, text=str(prompt))
-    text.pack(fill="x")
-    user_label = tk.Label(root, text="username:")
+    tk.Label(root, text=str(prompt)).pack(fill="x")
+    tk.Label(root, text="username:").pack()
     user = tk.Entry(root)
-    user_label.pack()
     user.pack(fill="x")
-    pswd_label = tk.Label(root, text="password:")
+    tk.Label(root, text="password:").pack()
     pswd = tk.Entry(root, show="*")
-    pswd_label.pack()
     pswd.pack(fill="x")
-    cont = tk.Button(root, text="Continue", command=root.quit)
-    cont.pack(fill="x")
+    tk.Button(root, text="Continue", command=root.quit).pack(fill="x")
     root.mainloop()
     ret = user.get(), pswd.get()
     root.destroy()
