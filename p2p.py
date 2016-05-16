@@ -1,121 +1,288 @@
-# TODO: Write portions to also work with asyncio
-# TODO: Make sure it rejects different protocols
-# TODO: Investigate requester-side handshake delay
-# TODO: Investigate waterfall overflow
-# TODO: Investigate peer shortage on 4-way connection
+# TODO: Allow for peer cleanup
+# TODO: Fix incorrect sender on message construction, when routed around obstruction
 
-import asyncore, asynchat, hashlib, json, multiprocessing.pool, socket, threading, time, uuid
+import hashlib, json, multiprocessing.pool, socket, threading, traceback, uuid
 from collections import namedtuple, deque
-from operator import methodcaller
 
-version = "0.0.E"
+version = "0.1.4"
 
-user_salt = str(uuid.uuid4())
+user_salt    = str(uuid.uuid4())
 sep_sequence = "\x1c\x1d\x1e\x1f"
 end_sequence = sep_sequence[::-1]
+compression = ['gzip']  # This should be in order of preference. IE: gzip is best, then none
+max_outgoing = 8
 
 
-base_protocol = namedtuple("protocol", ['end', 'sep', 'flag'])
-base_message = namedtuple("message", ['msg', 'sender'])
-headers = ["handshake", "new peers", "waterfall", "private"]
-
-
-class protocol(base_protocol):
+class protocol(namedtuple("protocol", ['end', 'sep', 'subnet', 'encryption'])):
     def id(self):
         h = hashlib.sha256(''.join([str(x) for x in self] + [version]).encode())
-        return h.hexdigest()
+        return to_base_58(int(h.hexdigest(), 16))
+
+default_protocol = protocol(end_sequence, sep_sequence, None, "PKCS1_v1.5")
 
 
-class message(base_message):
+class message(namedtuple("message", ['msg', 'sender', 'protocol', 'time'])):
     def reply(self, *args):
         if self.sender:
-            self.sender.snd('private', *args)
+            self.sender.send('whisper', 'whisper', *args)
         else:
             return False
 
     def parse(self):
-        return self.msg.split(self.sender.protocol.sep)
+        return self.msg.split(self.protocol.sep)
+
+    def __repr__(self):
+        return "message(type=" + repr(self.parse()[0]) + ", packets=" + repr(self.parse()[1:]) + ", sender=" + repr(self.sender.addr) + ")"
+
+    def id(self):
+        msg_hash = hashlib.sha384((self.msg + to_base_58(self.time)).encode())
+        return to_base_58(int(msg_hash.hexdigest(), 16))
+
+
+def to_base_58(i):
+    string = ""
+    while i:
+        string = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[i % 58] + string
+        i = i // 58
+    return string
+
+
+def from_base_58(string):
+    decimal = 0
+    if isinstance(string, bytes):
+        string = string.decode()
+    for char in string:
+        decimal = decimal * 58 + '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'.index(char)
+    return decimal
+
+
+def getUTC():
+    from calendar import timegm
+    from time import gmtime
+    return timegm(gmtime())
 
 
 class p2p_connection(object):
-    def __init__(self, addr, port, prot=protocol(end_sequence, sep_sequence, None), out_addr=None):
+    def __init__(self, sock, server, prot=default_protocol, outgoing=False):
+        self.sock = sock
+        self.server = server
         self.protocol = prot
-        self.incoming = ChatServer(addr, port, self, self.protocol)
-        self.handlers = []
-        self.daemon = threading.Thread(target=asyncore.loop)
+        self.outgoing = outgoing
+        self.buffer = []
+        self.id = None
+        self.time = getUTC()
+        self.addr = None
+        self.compression = []
+
+    def collect_incoming_data(self, data):
+        if data == '':
+            self.sock.close()
+            return ''
+        self.buffer.append(data)
+        self.time = getUTC()
+
+    def find_terminator(self):
+        return self.protocol.end.encode() in ''.encode().join(self.buffer)
+
+    def found_terminator(self):
+        raw_msg = ''.encode().join(self.buffer)
+        raw_msg = raw_msg.replace(self.protocol.end.encode(), ''.encode())
+        self.buffer = []
+        for method in self.compression:
+            if method in compression:
+                raw_msg = self.decompress(raw_msg, method)
+                break
+        if isinstance(raw_msg, bytes):
+            raw_msg = raw_msg.decode()
+        packets = raw_msg.split(self.protocol.sep)
+        # print("Message received: %s" % packets)
+        if packets[0] == 'waterfall':
+            if (packets[2] in (i for i, t in self.server.waterfalls)):
+                # print("Waterfall already captured")
+                return
+            else:
+                pass  # print("New waterfall received. Proceeding as normal")
+        msg = self.protocol.sep.join(packets[4:])  # Handle request without routing headers
+        self.server.handle_request(message(msg, self, self.protocol, from_base_58(packets[3])))
+
+    def send(self, msg_type, *args):
+        time = to_base_58(getUTC())
+        msg_hash = hashlib.sha384((self.protocol.sep.join(list(args)) + time).encode()).hexdigest()
+        msg_id = to_base_58(int(msg_hash, 16))
+        if (msg_id, time) not in self.server.waterfalls:
+            self.server.waterfalls.appendleft((msg_id, from_base_58(time)))
+        packets = [msg_type, self.server.id, msg_id, time] + list(args)
+        # print("Sending %s to %s" % (args, self))
+        msg = self.protocol.sep.join(packets).encode()
+        for method in compression:
+            if method in self.compression:
+                msg = self.compress(msg, method)
+                break
+        try:
+            self.sock.send(msg + self.protocol.end.encode())
+        except IOError as e:
+            self.server.daemon.debug.append((e, traceback.format_exc()))
+            self.server.daemon.disconnect(self)
+
+    def compress(self, msg, method):
+        if method == 'gzip':
+            import zlib
+            return zlib.compress(msg)
+        else:
+            raise Exception('Unknown compression method')
+
+    def decompress(self, msg, method):
+        if method == 'gzip':
+            import zlib
+            return zlib.decompress(msg)
+        else:
+            raise Exception('Unknown decompression method')
+
+
+class p2p_daemon(object):
+    def __init__(self, addr, port, server, prot=default_protocol):
+        self.protocol = prot
+        self.server = server
+        if self.protocol.encryption == "Plaintext":
+            self.sock = socket.socket()
+        elif self.protocol.encryption == "PKCS1_v1.5":
+            import net
+            self.sock = net.secureSocket()
+        else:
+            raise Exception("Unknown encryption type")
+        self.sock.bind((addr, port))
+        self.sock.listen(5)
+        self.sock.settimeout(0.1)
+        self.debug = []
+        self.daemon = threading.Thread(target=self.mainloop)
         self.daemon.daemon = True
         self.daemon.start()
-        self.queue = deque()
-        if not out_addr:
-            self.out_addr = (addr, port)
 
-    def cleanup(self):
-        self.handlers = list(set(self.handlers))
-        removes = []
-        ids = [handler.id for handler in self.handlers]
-        for handler in self.handlers[::-1]:  # Check for removal in reverse order
-                                             # Trusts older connections more
-            # If socket is closed, connection is in multiple times, 
-            # or it's been a minutes with data and no terminator, kill connection
-            if not handler.connected or max(ids.count(handler.id) - 1, 0) or \
-               (len(handler.buffer) and handler.time + 60 < time.time()):
-                removes.append(handler)
-                print(handler.id, not handler.connected, max(ids.count(handler.id) - 1, 0), \
-               (len(handler.buffer) and handler.time + 60 < time.time()))
-            ids = [handler.id for handler in self.handlers if handler not in removes]
-        for handler in removes:
-            handler.close()
-            self.handlers.remove(handler)
+    def handle_accept(self):
+        try:
+            conn, addr = self.sock.accept()
+            if conn is not None:
+                print('Incoming connection from %s' % repr(addr))
+                handler = p2p_connection(conn, self.server, self.protocol)
+                handler.send("whisper", "peers", json.dumps([(key, self.server.routing_table[key].addr) for key in self.server.routing_table.keys()]))
+                handler.send("whisper", "handshake", self.server.id, self.protocol.id(), json.dumps(self.server.out_addr), json.dumps(compression))
+                handler.sock.settimeout(0.01)
+                self.server.awaiting_ids.append(handler)
+                # print("Appended ", handler.addr, " to handler list: ", handler)
+        except socket.timeout:
+            pass
 
-    def handle_request(self, msg, handle):
-        msg = message(msg, handle)
-        packets = msg.parse()
-        print("Message received: %s" % msg.parse())
-        if packets[0] == "handshake":
-            if packets[2] != self.protocol.id():
-                handle.close()
-            handle.id = packets[1]
-            handle.addr = tuple(json.loads(packets[3]))
-            print(handle, handle.id)
-        elif packets[0] == "new peers":
-            new_handlers = json.loads(packets[1])
-            for handler in new_handlers:
-                self.connect(*handler)
-        elif packets[0] == "private":
-            meta_msg = packets[1:]
-            self.queue.appendleft(message(self.protocol.sep.join(meta_msg), handle))
-        elif packets[0] == "waterfall":
-            if self.incoming.get_id() not in packets:
-                meta_msg = packets[1:]
-                meta_id = meta_msg[meta_msg.index("ids:") + 1]
+    def mainloop(self):
+        while True:
+            for handler in list(self.server.routing_table.values()) + self.server.awaiting_ids:
+                # print("Collecting data from %s" % repr(handler))
                 try:
-                    self.cleanup()
-                    meta_handler = self.handlers[[h.id for h in self.handlers].index(meta_id)]
-                    # If I'm connected to the original sender, I almost certainly got it
-                    print("waterfall terminated")
-                except:
-                    self.queue.appendleft(message(self.protocol.sep.join(meta_msg[:meta_msg.index("ids:")]), None))
-                    self.waterfall(msg, handle)
-            else:
-                print("Waterfall terminated")
-        else:
-            self.waterfall(msg, handle)
-            self.queue.appendleft(msg)
-        self.cleanup()
+                    while not handler.find_terminator():
+                        if handler.collect_incoming_data(handler.sock.recv(1)) == '':
+                            self.disconnect(handler)
+                    handler.found_terminator()
+                except socket.timeout:
+                    continue #socket.timeout
+                except socket.error as e:
+                    if e.args[0] in [9, 104]:
+                        node_id = handler.id
+                        if not node_id:
+                            node_id = repr(handler)
+                        print("Node %s has disconnected from the network" % node_id)
+                    else:
+                        print("There was an unhandled exception with peer id %s. This peer is being disconnected, and the relevant exception is added to the debug queue. If you'd like to report this, please post a copy of your p2p_socket.daemon.debug list to github.com/gappleto97/python-utils." % handler.id)
+                        self.debug.append((e, traceback.format_exc()))
+                        handler.sock.close()
+                        self.disconnect(handler)
+            self.handle_accept()
 
-    def waterfall(self, msg, handler):
-        return
-        if msg.parse()[0] == "waterfall":
-            meta_msg = msg.parse() + [handler.id, self.incoming.get_id()]
+    def disconnect(self, handler):
+        node_id = handler.id
+        if not node_id:
+            node_id = repr(handler)
+        print("Connection to node %s has been closed" % node_id)
+        if handler in self.server.awaiting_ids:
+            self.server.awaiting_ids.remove(handler)
+        elif self.server.routing_table.get(handler.id):
+            self.server.routing_table.pop(handler.id)
+        if handler.id and handler.id in self.server.outgoing:
+            self.server.outgoing.remove(handler.id)
+        elif handler.id and handler.id in self.server.incoming:
+            self.server.incoming.remove(handler.id)
+
+
+class p2p_socket(object):
+    def __init__(self, addr, port, prot=default_protocol, out_addr=None):
+        self.protocol = prot
+        self.routing_table = {}  # In format {ID: handler}
+        self.awaiting_ids = []
+        self.outgoing = []
+        self.incoming = []
+        self.queue = deque()
+        self.waterfalls = deque()
+        if out_addr:
+            self.out_addr = out_addr
         else:
-            meta_msg = ["waterfall"] + msg.parse() + ["ids:", handler.id, self.incoming.get_id()]
-        print("Waterfalling %s" %str(meta_msg))
-        for handler in [h for h in self.handlers if h.id != handler.id]:
-            handler.snd(*meta_msg)
+            self.out_addr = addr, port
+        info = [str(out_addr), prot.id(), user_salt]
+        h = hashlib.sha384(''.join(info).encode())
+        self.id = to_base_58(int(h.hexdigest(), 16))
+        self.daemon = p2p_daemon(addr, port, self, prot)
+
+    def handle_request(self, msg):
+        handler = msg.sender
+        packets = msg.parse()
+        if packets[0] == 'handshake':
+            if packets[2] != self.protocol.id():
+                handler.sock.close()
+                self.awaiting_ids.remove(handler)
+                return
+            handler.id = packets[1]
+            if handler.outgoing:
+                self.outgoing.append(handler.id)
+            else:
+                self.incoming.append(handler.id)
+            handler.addr = json.loads(packets[3])
+            handler.compression = json.loads(packets[4])
+            if handler in self.awaiting_ids:
+                self.awaiting_ids.remove(handler)
+            self.routing_table.update({packets[1]: handler})
+        elif packets[0] == 'peers':
+            new_peers = json.loads(packets[1])
+            for id, addr in new_peers:
+                if len(self.outgoing) < max_outgoing and addr:
+                    self.connect(addr[0], addr[1], id)
+        elif packets[0] == 'whisper':
+            self.queue.appendleft(msg)
+        else:
+            if self.waterfall(msg):
+                self.queue.appendleft(msg)
 
     def send(self, *args):
-        self.cleanup()
-        multiprocessing.pool.ThreadPool().map(methodcaller('snd', *args), self.handlers)
+        # self.cleanup()
+        # map(methodcaller('send', 'broadcast', 'broadcast', *args), self.routing_table.values())
+        for handler in self.routing_table.values():
+            handler.send('broadcast', 'broadcast', *args)
+
+    def waterfall(self, msg):
+        # self.cleanup()
+        # print msg.id(), [i for i, t in self.waterfalls]
+        if msg.id() not in (i for i, t in self.waterfalls):
+            self.waterfalls.appendleft((msg.id(), msg.time))
+            for handler in self.routing_table.values():
+                handler.send('waterfall', *msg.parse())
+            self.waterfalls = deque(set(self.waterfalls))
+            removes = []
+            for i, t in self.waterfalls:
+                if t - getUTC() > 60:
+                    removes.append((i, t))
+            for x in removes:
+                self.waterfalls.remove(x)
+            while len(self.waterfalls) > 100:
+                self.waterfalls.pop()
+            return True
+        # print("Not rebroadcasting")
+        return False
 
     def recv(self, quantity=1):
         if quantity != 1:
@@ -126,80 +293,33 @@ class p2p_connection(object):
             return ret_list
         elif len(self.queue):
             return self.queue.pop()
-        return None
+        else:
+            return None
 
     def connect(self, addr, port, id=None):
-        self.cleanup()
+        # self.cleanup()
         try:
-            if socket.getaddrinfo(addr, port)[0] == socket.getaddrinfo(*self.incoming.addr)[0] or \
-            (addr, port) in (h.addr for h in self.handlers) or \
-            id and id in (h.id for h in self.handlers):
+            print("Attempting connection to %s:%s" % (addr, port))
+            if socket.getaddrinfo(addr, port)[0] == socket.getaddrinfo(*self.out_addr)[0] or \
+                                                        id and id in self.routing_table.keys():
                 print("Connection already established")
-                print(socket.getaddrinfo(addr, port)[0] == socket.getaddrinfo(*self.incoming.addr)[0], \
-                        (addr, port) in (h.addr for h in self.handlers), \
-                        id and id in (h.id for h in self.handlers))
-                return
-            conn = socket.socket()
+                return False
+            if self.protocol.encryption == "Plaintext":
+                conn = socket.socket()
+            elif self.protocol.encryption == "PKCS1_v1.5":
+                import net
+                conn = net.secureSocket()
             conn.connect((addr, port))
-            handler = ChatHandler(conn, self, self.protocol)
+            conn.settimeout(0.1)
+            handler = p2p_connection(conn, self, self.protocol, outgoing=True)
             handler.id = id
-            handler.snd("handshake", self.incoming.get_id(), self.protocol.id(), json.dumps(self.out_addr))
-            handler.snd("new peers", json.dumps([h.addr + (h.id, ) for h in self.handlers]))
-            self.handlers.append(handler)
+            handler.send("whisper", "peers", json.dumps([(key, self.routing_table[key].addr) for key in self.routing_table.keys()]))
+            handler.send("whisper", "handshake", self.id, self.protocol.id(), json.dumps(self.out_addr), json.dumps(compression))
+            if not id:
+                self.awaiting_ids.append(handler)
+            else:
+                self.routing_table.update({id: handler})
             # print("Appended ", port, addr, " to handler list: ", handler)
-        except:
+        except Exception as e:
             print("Connection unsuccessful")
-
-
-class ChatHandler(asynchat.async_chat):
-    def __init__(self, sock, server, prot=protocol(end_sequence, sep_sequence, None)):
-        asynchat.async_chat.__init__(self, sock=sock)
-        self.protocol = prot
-        self.set_terminator(self.protocol.end)
-        self.buffer = []
-        self.server = server
-        self.id = None
-        self.time = time.time()
-        # print(self.protocol)
- 
-    def collect_incoming_data(self, data):
-        self.buffer.append(data)
-        self.time = time.time()
-
-    def found_terminator(self):
-        msg = ''.join(self.buffer)
-        # print('Received: %s' % msg)
-        self.buffer = []
-        self.server.handle_request(msg, self)
-
-    def snd(self, *args):
-        msg = self.protocol.sep.join(args)
-        # print(str(msg) + self.protocol.end)
-        self.push(str(msg) + self.protocol.end)
-
-
-class ChatServer(asyncore.dispatcher):
-    def __init__(self, host, port, server, prot=protocol(end_sequence, sep_sequence, None)):
-        asyncore.dispatcher.__init__(self)
-        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.bind((host, port))
-        self.listen(5)
-        self.server = server
-        self.protocol = prot
-        print(self.protocol)
-
-    def handle_accept(self):
-        pair = self.accept()
-        if pair is not None:
-            sock, addr = pair
-            print('Incoming connection from %s' % repr(addr))
-            handler = ChatHandler(sock, self.server, self.protocol)
-            handler.snd("handshake", self.get_id(), self.protocol.id(), json.dumps(self.server.out_addr))
-            handler.snd("new peers", json.dumps([h.addr + (h.id, ) for h in self.server.handlers]))
-            self.server.handlers.append(handler)
-            # print("Appended ", handler.addr, " to handler list: ", handler)
-
-    def get_id(self):
-        info = [str(self.addr), self.__repr__(), self.protocol.id(), user_salt]
-        h = hashlib.sha384(''.join(info).encode())
-        return h.hexdigest()
+            raise e
