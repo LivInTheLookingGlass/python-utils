@@ -29,7 +29,7 @@ def sendText(text, to, carriers, SERVER="localhost",
     for i in range(len(to)):
         to[i] = parseCarriers(to[i], carriers[i])
 
-    print to
+    print(to)
 
     sendMail(text, "Phone alert", to, SERVER=SERVER,
              ADDRESS=ADDRESS, PSWD=PSWD)
