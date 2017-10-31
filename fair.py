@@ -19,3 +19,15 @@ def fairest(symbols="01"):
             seq = ''.join((transitions[x] for x in seq))
         yield seq[count]
         count += 1
+
+        
+def fairest_2():
+    """Uses an algorithm to generate an 2-party Thue-Morse sequence"""
+    num = 0
+    while True:
+        temp, ret = num, 0
+        num += 1
+        while temp:
+            ret += 1
+            temp &= temp - 1
+        yield ret & 1
