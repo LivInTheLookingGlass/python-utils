@@ -13,7 +13,7 @@ def sendMail(text, subject, to, SERVER=("localhost"),
 
     # Send the mail
 
-    server = smtplib.SMTP(*SERVER)
+    server = smtplib.SMTP(SERVER)
     if SERVER != "localhost":
         server.ehlo()
         server.starttls()
