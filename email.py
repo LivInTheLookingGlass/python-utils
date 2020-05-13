@@ -39,6 +39,7 @@ def parseCarriers(to, carrier):
     """Parse the email address of a given number and carrier"""
     carriers = {"Alltel": "@sms.alltelwireless.com",
                 "AT&T": "@txt.att.net",
+                "ATT": "@txt.att.net",
                 "Bell Canada": "@txt.bellmobility.ca",
                 "Boost": "@sms.myboostmobile.com",
                 "Centennial": "@cwemail.com",
